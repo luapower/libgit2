@@ -7,7 +7,8 @@ gcc -c -O2 $C \
 	src/hash/hash_generic.c -Isrc/hash \
 	src/transports/*.c -Isrc/transports \
 	deps/regex/regex.c -Ideps/regex \
-	deps/http-parser/http_parser.c -Ideps/http-parser
+	deps/http-parser/http_parser.c -Ideps/http-parser \
+	-I../zlib
 gcc *.o -shared -o ../../bin/$P/$D -L../../bin/$P -lz $L
 ar rcs ../../bin/$P/$A *.o
 rm *.o
