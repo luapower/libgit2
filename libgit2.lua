@@ -1,9 +1,20 @@
+
+--libgi2 ffi binding.
+--Written by Cosmin Apreutesei. Public Domain.
+
 require'libgit2_h'
 local ffi = require'ffi'
 local C = ffi.load'git2'
 local git = setmetatable({}, {__index = C})
 
 --helpers
+
+local function nilerr(ret)
+	if ret >= 0 then return ret end
+	local e = C.giterr_last()
+	return nil, string.format('libgit2 error: %d/%d: %s',
+		ret, e.klass, ffi.string(e.message))
+end
 
 local function check(ret)
 	if ret >= 0 then return ret end
@@ -17,17 +28,6 @@ local function checkh(ret)
 	local e = C.giterr_last()
 	error(string.format('libgit2 error: %d/%d: %s',
 		ret, e.klass, ffi.string(e.message)))
-end
-
-local function git_buf(size)
-	local buf = ffi.new'git_buf'
-	local p = ffi.new('uint8_t[?]', size)
-	buf.ptr = p
-	buf.asize = size
-	ffi.gc(buf, function()
-		p = nil
-	end)
-	return buf
 end
 
 local function strarray_to_table(sa)
@@ -47,6 +47,16 @@ function git.version()
 	local v = ffi.new'int[3]'
 	C.git_libgit2_version(v, v+1, v+2)
 	return v[0], v[1], v[2]
+end
+
+function git.buf(size)
+	return ffi.new'git_buf'
+end
+
+git.buf_free = C.git_buf_free
+
+function git.buf_tostr(buf)
+	return ffi.string(buf.ptr, buf.asize)
 end
 
 function git.oid(s)
@@ -151,6 +161,10 @@ function git.commit_tree(commit)
 	return tree
 end
 
+function git.commit_time(commit)
+	return tonumber(C.git_commit_time(commit))
+end
+
 function git.tree_lookup(repo, oid)
 	local tree = ffi.new'git_tree*[1]'
 	check(C.git_tree_lookup(tree, repo, oid))
@@ -185,7 +199,7 @@ function git.tree_walk(repo, tree, func, level)
 	end
 end
 
-function git.files(repo, tree, func)
+function git.files(repo, tree)
 	local level0, name0 = 0
 	local parents = {}
 	return coroutine.wrap(function()
@@ -215,10 +229,12 @@ git.tree_entry_id = C.git_tree_entry_id
 
 local function findconfig(func)
 	return function()
-		local sz = 4096
-		local path = ffi.new('char[?]', sz)
-		check(func(path, sz))
-		return ffi.string(path)
+		local buf = git.buf()
+		local ret, err = nilerr(func(buf))
+		if not ret then return nil, err end
+		local s = buf:tostring()
+		buf:free()
+		return s
 	end
 end
 git.config_find_global = findconfig(C.git_config_find_global)
@@ -236,22 +252,51 @@ local function getconfig(func)
 end
 
 git.config_open_default = getconfig(C.git_config_open_default)
-git.repo_config = C.git_repository_config
+git.repo_config = getconfig(C.git_repository_config)
 
-	ffi.gc(cfg, C.git_config_free)
-
-
-function git.config(repo, var)
-		local cfg = ffi.new'git_config*cfg[1]'
-		check(C.git_config_open_default(cfg))
-		C.git_repository_config(cfg, repo)
-	C.git_config_get_string
+function git.config_free(cfg)
+	ffi.gc(cfg, nil)
+	C.git_config_free(cfg)
 end
+
+function git.config_get(cfg, name)
+	local entry = ffi.new'const git_config_entry*[1]'
+	local ret = C.git_config_get_entry(entry, cfg, name)
+	if ret < 0 then return end
+	return ffi.string(entry[0].value), entry[0].level
+end
+
+function git.config_set(cfg, name, val)
+	local entry = ffi.new'git_config_entry'
+	check(C.git_config_set_string(entry, cfg, name, val))
+end
+
+function git.config_entries(cfg)
+	return coroutine.wrap(function()
+		local iter = ffi.new'git_config_iterator*[1]'
+		local entry = ffi.new'git_config_entry*[1]'
+		C.git_config_iterator_new(iter, cfg)
+		iter = iter[0]
+		while C.git_config_next(entry, iter) == 0 do
+			coroutine.yield(
+				ffi.string(entry[0].name),
+				ffi.string(entry[0].value),
+				entry[0].level)
+		end
+		C.git_config_iterator_free(iter)
+	end)
+end
+
 
 --object API
 
+ffi.metatype('git_buf', {__index = {
+		free = git.buf_free,
+		tostring = git.buf_tostr,
+	}})
+
 ffi.metatype('git_oid', {__index = {
-		tostr = git.oid_tostr,
+		tostring = git.oid_tostr,
 	}})
 
 ffi.metatype('git_repository', {__index = {
@@ -266,6 +311,7 @@ ffi.metatype('git_repository', {__index = {
 		refs = git.refs,
 		walk = git.tree_walk,
 		files = git.files,
+		config = git.repo_config,
 	}})
 
 ffi.metatype('git_tag', {__index = {
@@ -280,6 +326,7 @@ ffi.metatype('git_reference', {__index = {
 ffi.metatype('git_commit', {__index = {
 		free = git.commit_free,
 		tree = git.commit_tree,
+		time = git.commit_time,
 	}})
 
 ffi.metatype('git_tree', {__index = {
@@ -294,37 +341,13 @@ ffi.metatype('git_tree_entry', {__index = {
 		id   = git.tree_entry_id,
 	}})
 
+ffi.metatype('git_config', {__index = {
+		free = git.config_free,
+		get  = git.config_get,
+		set  = git.config_set,
+		entries = git.config_entries,
+	}})
 
-if not ... then
-
-	local pp = require'pp'
-	local lfs = require'lfs'
-	print(git.version())
-
-	local pwd = lfs.currentdir()
-	lfs.chdir'../../../luapower'
-
-	local repo = git.open'.'
-
-	pp(repo:tags())
-	pp(repo:refs())
-
-	local ref = repo:ref_dwim'master'
-	local id = repo:ref_name_to_id(ref:name())
-	print(id:tostr())
-	local commit = repo:commit(id)
-	local tree = commit:tree()
-	for path in repo:files(tree) do
-		print(path)
-	end
-
-	tree:free()
-	commit:free()
-	ref:free()
-	repo:free()
-
-	lfs.chdir(pwd)
-end
 
 return git
 
