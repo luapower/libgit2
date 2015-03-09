@@ -57,7 +57,7 @@ end
 git.buf_free = C.git_buf_free
 
 function git.buf_tostr(buf)
-	return ffi.string(buf.ptr, buf.asize)
+	return ffi.string(buf.ptr, buf.size)
 end
 
 function git.oid(s)
