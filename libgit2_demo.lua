@@ -1,3 +1,4 @@
+local pkg = ...
 local git = require'libgit2'
 local pp = require'pp'
 local lfs = require'lfs'
@@ -6,7 +7,7 @@ print(git.version())
 local pwd = lfs.currentdir()
 lfs.chdir'../../../luapower'
 
-local repo = git.open'.'
+local repo = git.open('_git/'..(pkg or 'glue')..'/.git')
 
 pp(repo:tags())
 pp(repo:refs())

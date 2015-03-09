@@ -1,11 +1,12 @@
 
---libgi2 ffi binding.
+--libgi2 ffi binding (incomplete).
 --Written by Cosmin Apreutesei. Public Domain.
 
 require'libgit2_h'
 local ffi = require'ffi'
 local C = ffi.load'git2'
-local git = setmetatable({}, {__index = C})
+local git = {C = C}
+local glue = require'glue'
 
 --helpers
 
@@ -91,7 +92,7 @@ function git.tags(repo)
 	return strarray_to_table(tags)
 end
 
-function git.tag_lookup(repo, oid)
+function git.tag(repo, oid)
 	oid = oid or git.oid(oid)
 	local tag = ffi.new'git_tag*[1]'
 	check(C.git_tag_lookup(tag, repo, oid))
@@ -105,6 +106,53 @@ function git.tag_free(tag)
 	C.git_tag_free(tag)
 end
 
+local function describe_opts(opts)
+	return ffi.new('git_describe_options',
+		glue.update({version = 1, max_candidates_tags = 10}, opts))
+end
+
+local function describe_format(res, opts)
+	local opts = ffi.new('git_describe_format_options',
+		glue.update({version = 1, abbreviated_size = 7}, opts))
+	local buf = git.buf()
+	check(C.git_describe_format(buf, res[0], opts))
+	local s = buf:tostring()
+	buf:free()
+	return s
+end
+
+function git.describe_commit(commit_obj, opts)
+	local res = ffi.new'git_describe_result*[1]'
+	check(C.git_describe_commit(res, commit_obj, describe_opts(opts)))
+	local s = describe_format(res, opts)
+	C.git_describe_result_free(res[0])
+	return s
+end
+
+function git.describe_workdir(repo, opts)
+	local res = ffi.new'git_describe_result*[1]'
+	check(C.git_describe_workdir(res, repo, describe_opts(opts)))
+	local s = describe_format(res, opts)
+	C.git_describe_result_free(res[0])
+	return s
+end
+
+local object_types = {commit = C.GIT_OBJ_COMMIT, tree = C.GIT_OBJ_TREE,
+	blob = C.GIT_OBJ_BLOB, tag = C.GIT_OBJ_TAG}
+function git.object(repo, oid, type)
+	oid = oid or git.oid(oid)
+	local obj = ffi.new'git_object*[1]'
+	check(C.git_object_lookup(obj, repo, oid, object_types[type] or type))
+	obj = obj[0]
+	ffi.gc(obj, C.git_object_free)
+	return obj
+end
+
+function git.object_free(obj)
+	ffi.gc(obj, nil)
+	C.git_object_free(obj)
+end
+
 local function getref(func)
 	return function(...)
 		local ref = ffi.new'git_reference*[1]'
@@ -115,7 +163,7 @@ local function getref(func)
 	end
 end
 
-git.ref_lookup = getref(C.git_reference_lookup)
+git.ref = getref(C.git_reference_lookup)
 git.ref_dwim = getref(C.git_reference_dwim)
 
 function git.ref_name_to_id(repo, name)
@@ -165,7 +213,7 @@ function git.commit_time(commit)
 	return tonumber(C.git_commit_time(commit))
 end
 
-function git.tree_lookup(repo, oid)
+function git.tree(repo, oid)
 	local tree = ffi.new'git_tree*[1]'
 	check(C.git_tree_lookup(tree, repo, oid))
 	tree = tree[0]
@@ -192,7 +240,7 @@ function git.tree_walk(repo, tree, func, level)
 		local entry = tree:byindex(i)
 		func(entry, tree, level)
 		if entry:type() == C.GIT_OBJ_TREE then
- 			local subtree = repo:tree_lookup(entry:id())
+ 			local subtree = repo:tree(entry:id())
  			git.tree_walk(repo, subtree, func, level + 1)
  			subtree:free()
 		end
@@ -208,7 +256,9 @@ function git.files(repo, tree)
 				if level > level0 then
 					table.insert(parents, name0)
 				elseif level < level0 then
-					table.remove(parents)
+					for i = 1, level0 - level do
+						table.remove(parents)
+					end
 				end
 				table.insert(parents, name)
 				local path = table.concat(parents, '/')
@@ -303,15 +353,22 @@ ffi.metatype('git_repository', {__index = {
 		free = git.repo_free,
 		tags = git.tags,
 		commit = git.commit,
-		tag_lookup = git.tag_lookup,
-		tree_lookup = git.tree_lookup,
-		ref_lookup = git.ref_lookup,
+		tag = git.tag,
+		tree = git.tree,
+		ref = git.ref,
+		object = git.object,
 		ref_dwim = git.ref_dwim,
 		ref_name_to_id = git.ref_name_to_id,
 		refs = git.refs,
-		walk = git.tree_walk,
+		tree_walk = git.tree_walk,
 		files = git.files,
 		config = git.repo_config,
+		describe = git.describe_workdir,
+	}})
+
+ffi.metatype('git_object', {__index = {
+		free = git.object_free,
+		describe_commit = git.describe_commit,
 	}})
 
 ffi.metatype('git_tag', {__index = {
