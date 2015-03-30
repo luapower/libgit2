@@ -1,1 +1,2 @@
 libgit2 2.0.22 from https://github.com/libgit2/libgit2/releases (GPL2/LE License)
+requires: zlib
