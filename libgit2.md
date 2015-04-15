@@ -1,12 +1,15 @@
 ---
 tagline: libgit2 ffi binding
+platforms: osx32, osx64
 ---
 
 ## `git = require'libgit2'`
 
 libgit2 ffi binding -- only the basics of repository exploration are covered.
 
-Feel free to improve it, it's a pretty large but good (so, boring) API.
+Feel free to improve it, it's a pretty boring API.
+
+> NOTE: libgit2 dropped support for Windows XP.
 
 ## API
 

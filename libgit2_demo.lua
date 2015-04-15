@@ -7,7 +7,7 @@ print(git.version())
 local pwd = lfs.currentdir()
 lfs.chdir'../../../luapower'
 
-local repo = git.open('_git/'..(pkg or 'glue')..'/.git')
+local repo = git.open('.git') --git.open('.mgit/'..(pkg or 'glue')..'/.git')
 
 pp(repo:tags())
 pp(repo:refs())
